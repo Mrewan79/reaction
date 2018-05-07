@@ -1,7 +1,7 @@
 import { Random } from "meteor/random";
 import { expect } from "meteor/practicalmeteor:chai";
 import { Factory } from "meteor/dburles:factory";
-import { stubs } from "meteor/practicalmeteor:sinon";
+import { sinon } from "meteor/practicalmeteor:sinon";
 import { PublicationCollector } from "meteor/johanbrook:publication-collector";
 import * as Collections from "/lib/collections";
 import { Reaction } from "/server/api";
@@ -10,17 +10,22 @@ import { createActiveShop } from "/server/imports/fixtures/shops";
 
 Fixtures();
 
-describe.only("Tags Publication", () => {
+describe("Tags Publication", () => {
+  let sandbox;
   let collector;
   let primaryShop;
   let shop;
   let tags;
 
   beforeEach(() => {
+    sandbox = sinon.sandbox.create();
+
     collector = new PublicationCollector({ userId: Random.id() });
 
     primaryShop = createActiveShop();
     shop = Factory.create("shop");
+
+    sandbox.stub(Reaction, "getPrimaryShopId", () => primaryShop._id);
 
     Collections.Tags.remove({});
 
@@ -31,24 +36,29 @@ describe.only("Tags Publication", () => {
     });
   });
 
-  after(() => {
-    stubs.restoreAll();
+  afterEach(() => {
+    sandbox.restore();
   });
 
   it("ensures our test is set up properly", () => {
     expect(primaryShop._id).to.not.equal(shop._id);
   });
 
-  it("fetches the list of Tags", (done) => {
+  it("returns all Tags when the current shop is the Primary Shop", (done) => {
+    // create a tag for a Merchant Shop
+    const tag = createTag({ shopId: shop._id });
+    Collections.Tags.insert(tag);
+
+    const expectedTags = [...tags, tag];
+
+    sandbox.stub(Reaction, "getShopId", () => primaryShop._id);
+
     collector.collect("Tags", (collections) => {
       const collectionTags = collections.Tags;
 
-      // .sort().join(",") to help with equality testing
-      expect(collectionTags.map((t) => t.name).sort().join(","))
-        .to.equal(tags.map((t) => t.name).sort().join(","));
-
-      done();
-    });
+      expect(collectionTags.map((t) => t.name))
+        .to.eql(expectedTags.map((t) => t.name));
+    }).then(() => done(), done);
   });
 
   it("scopes the list of Tags to the current merchant shop", (done) => {
@@ -56,21 +66,18 @@ describe.only("Tags Publication", () => {
     const tag = createTag({ shopId: shop._id });
     Collections.Tags.insert(tag);
 
-    const getShopIdpSpy = stubs.create("getShopIdpSpy", Reaction, "getShopId");
-    getShopIdpSpy.returns(shop._id);
+    sandbox.stub(Reaction, "getShopId", () => shop._id);
 
     collector.collect("Tags", (collections) => {
       const collectionTags = collections.Tags;
 
-      expect(collectionTags.length).to.equal(1);
-      expect(collectionTags[0].name).to.equal(tag.name);
-
-      done();
-    });
+      expect(collectionTags.map((t) => t.name))
+        .to.eql([tag.name]);
+    }).then(() => done(), done);
   });
 
   function randomString() {
-    return new Date().getTime().toString();
+    return Math.random().toString(36);
   }
 
   function createTag(tagData = {}) {
